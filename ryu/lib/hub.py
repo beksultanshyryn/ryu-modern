@@ -16,6 +16,7 @@
 
 import logging
 import os
+from ryu.lib import dnspython_compat
 from ryu.lib import ip
 
 
@@ -27,6 +28,7 @@ HUB_TYPE = os.getenv('RYU_HUB_TYPE', 'eventlet')
 LOG = logging.getLogger('ryu.lib.hub')
 
 if HUB_TYPE == 'eventlet':
+    dnspython_compat.apply()
     import eventlet
     # HACK:
     # sleep() is the workaround for the following issue.
