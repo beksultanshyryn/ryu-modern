@@ -1,0 +1,104 @@
+diff --git a/.github/workflows/compatibility-test.yml b/.github/workflows/compatibility-test.yml
+new file mode 100644
+index 0000000000000000000000000000000000000000..6fe1640bf7feb336c4157fc90be100008c3f9fa1
+--- /dev/null
++++ b/.github/workflows/compatibility-test.yml
+@@ -0,0 +1,98 @@
++name: Compatibility tests
++
++on: [push, pull_request]
++
++permissions:
++  contents: read
++  pull-requests: write
++
++jobs:
++  compatibility-tests:
++    name: Python ${{ matrix.python-version }} | eventlet ${{ matrix.eventlet-version }} | dnspython ${{ matrix.dnspython-version }}
++    runs-on: ubuntu-latest
++    strategy:
++      fail-fast: false
++      matrix:
++        python-version: ["3.8", "3.9", "3.10", "3.11"]
++        eventlet-version: ["0.30.2", "0.33.0"]
++        dnspython-version: ["1.16.0", "2.3.0", "2.8.0"]
++    steps:
++      - name: Checkout repo
++        uses: actions/checkout@v4
++
++      - name: Set up Python ${{ matrix.python-version }}
++        uses: actions/setup-python@v5
++        with:
++          python-version: ${{ matrix.python-version }}
++          cache: pip
++          cache-dependency-path: |
++            pip-requirements.txt
++            tools/pip-requires
++            setup.cfg
++            setup.py
++
++      - name: Install dependencies
++        run: |
++          python -m pip install --upgrade pip
++          pip install -r tools/pip-requires
++          pip install "eventlet==${{ matrix.eventlet-version }}" "dnspython==${{ matrix.dnspython-version }}"
++          pip install -e .
++
++      - name: Apply compatibility patches
++        run: |
++          python tools/patch_dnspython_tlsa.py
++          python tools/fix_collections_imports.py ryu --log-file collections_fix.log
++
++      - name: Run unit tests
++        id: unit_tests
++        run: |
++          set -o pipefail
++          NOSE_VERBOSE=0 python ryu/tests/run_tests.py | tee unit-test.log
++
++      - name: Verify ryu-manager --version
++        id: version_check
++        run: |
++          ryu-manager --version | tee ryu-manager-version.log
++
++      - name: Generate compatibility report
++        if: always()
++        run: |
++          mkdir -p compatibility-results
++          report_path="compatibility-results/compatibility-report-${{ matrix.python-version }}-eventlet-${{ matrix.eventlet-version }}-dnspython-${{ matrix.dnspython-version }}.md"
++          {
++            echo "# Ryu compatibility report"
++            echo
++            echo "- Python: ${{ matrix.python-version }}"
++            echo "- eventlet: ${{ matrix.eventlet-version }}"
++            echo "- dnspython: ${{ matrix.dnspython-version }}"
++            echo "- Unit tests: ${{ steps.unit_tests.outcome }}"
++            echo "- ryu-manager --version: ${{ steps.version_check.outcome }}"
++            echo "- Job status: ${{ job.status }}"
++          } > "${report_path}"
++          cp unit-test.log compatibility-results/ || true
++          cp ryu-manager-version.log compatibility-results/ || true
++          cp collections_fix.log compatibility-results/ || true
++
++      - name: Upload compatibility artifacts
++        if: always()
++        uses: actions/upload-artifact@v4
++        with:
++          name: compatibility-results-${{ matrix.python-version }}-eventlet-${{ matrix.eventlet-version }}-dnspython-${{ matrix.dnspython-version }}
++          path: compatibility-results
++
++      - name: Notify failure on PR
++        if: failure() && github.event_name == 'pull_request'
++        uses: actions/github-script@v7
++        with:
++          script: |
++            const report = `Compatibility tests failed for Python ${process.env.PY_VERSION} / eventlet ${process.env.EVENTLET_VERSION} / dnspython ${process.env.DNSPYTHON_VERSION}.`;
++            await github.rest.issues.createComment({
++              owner: context.repo.owner,
++              repo: context.repo.repo,
++              issue_number: context.issue.number,
++              body: report,
++            });
++        env:
++          PY_VERSION: ${{ matrix.python-version }}
++          EVENTLET_VERSION: ${{ matrix.eventlet-version }}
++          DNSPYTHON_VERSION: ${{ matrix.dnspython-version }}
